@@ -1,0 +1,245 @@
+---
+title: "NYPD Shooting Incident Analysis"
+output:
+  html_document:
+    df_print: paged
+date: '2022-05-07'
+---
+```{r import_library}
+library(tidyverse)
+library("lubridate")
+library(ggplot2)
+options(dplyr.summarise.inform = FALSE)
+```
+
+## Data Loading and Summary
+I transformed data into factor.
+```{r get_nypd_data}
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+if (!(file.exists("./NYPD_Shooting_Incident_Data__Historic_.csv"))) {
+  download.file(url_in, "./NYPD_Shooting_Incident_Data__Historic_.csv")
+}
+
+file_name <- "NYPD_Shooting_Incident_Data__Historic_.csv"
+nypd_cases <- read_csv(file_name) %>%
+  mutate(INCIDENT_KEY=as.factor(INCIDENT_KEY),
+         OCCUR_DATE=mdy(OCCUR_DATE), 
+         OCCUR_TIME=c(OCCUR_TIME),
+         YEAR = year(OCCUR_DATE), 
+         MONTH=month(OCCUR_DATE),
+         BORO=as.factor(BORO),
+         PRECINCT=as.factor(PRECINCT),
+         JURISDICTION_CODE=as.factor(JURISDICTION_CODE),
+         LOCATION_DESC=as.factor(LOCATION_DESC),
+         STATISTICAL_MURDER_FLAG=as.factor(STATISTICAL_MURDER_FLAG),
+         PERP_AGE_GROUP=as.factor(PERP_AGE_GROUP),
+         PERP_SEX=as.factor(PERP_SEX),
+         PERP_RACE=as.factor(PERP_RACE),
+         VIC_AGE_GROUP=as.factor(VIC_AGE_GROUP),
+         VIC_SEX=as.factor(VIC_SEX),
+         VIC_RACE=as.factor(VIC_RACE),
+         X_COORD_CD=as.factor(X_COORD_CD),
+         Y_COORD_CD=as.factor(Y_COORD_CD),
+         Latitude=as.factor(Latitude),
+         Longitude=as.factor(Longitude),
+         Lon_Lat=as.factor(Lon_Lat))
+```
+<br><br>
+
+## Data description and analysis
+Here is summary.
+This data set is dated from 2006-01-01 to 2020-12-31.  
+There are big null value in LOCATION_DESC, PERP_AGE_GROUP, PERP_SEX, and PERP_RACE columns.  
+So This data set has bias for perpetrator and locations.  
+Even though null value in PERP_RACE is not small proportion (about 35%), I'll remove records which PERP_RACE is null.  
+Since it is hard to replace null by other value.  
+
+```{r data_summary}
+summary(nypd_cases)
+
+# Proportion of null value in LOCATION_DESC
+sum(is.na(nypd_cases$LOCATION_DESC))/nrow(nypd_cases)
+# Proportion of null value in PERP_AGE_GROUP
+sum(is.na(nypd_cases$PERP_AGE_GROUP))/nrow(nypd_cases)
+# Proportion of null value in PERP_SEX
+sum(is.na(nypd_cases$PERP_SEX))/nrow(nypd_cases)
+# Proportion of null value in PERP_RACE
+sum(is.na(nypd_cases$PERP_RACE))/nrow(nypd_cases)
+
+# Number of record which PERP_RACE is null in each year
+nypd_cases %>% 
+  filter(is.na(nypd_cases$PERP_RACE)) %>%
+  group_by(YEAR) %>%
+  summarize(null_record_count = n())
+
+nypd_cases <- nypd_cases %>%
+  filter(!is.na(PERP_RACE))
+```
+
+## Objective of report
+I'd like to look into this data to check if there is racism in New York.
+
+This analysis may hurt someone who is sensitive to racism, I hope you understand that **this analysis is data perspective.**
+
+Firstly, let's see what race has been arrested most and what race has been damaged in New York.
+
+## The 7 most victims and perpetrator in New York
+<br>
+```{r top10_vic}
+nypd_vict <- nypd_cases %>%
+  group_by(VIC_RACE) %>%
+  summarize(count_vic_race = n()) %>%
+  mutate(VIC_PROP = count_vic_race / nrow(nypd_cases)) %>%
+  slice_max(order_by = count_vic_race, n=10)
+```
+
+```{r top10_vic_graph}
+ggplot(nypd_vict, aes(x=reorder(VIC_RACE,-VIC_PROP), y=VIC_PROP)) +
+  geom_bar(stat = "identity", position="dodge") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle("Top 7 victims in New York 2006 - 2020") +
+  xlab("Victim Race") +
+  ylab("Proportion")
+```
+
+<br><br>
+
+```{r top10_perp}
+nypd_perp <- nypd_cases %>%
+  group_by(PERP_RACE) %>%
+  summarize(count_perp_race = n()) %>%
+  mutate(PERP_PROP = count_perp_race / nrow(nypd_cases)) %>%
+  slice_max(order_by = count_perp_race, n=10)
+```
+
+```{r top10_perp_graph}
+ggplot(nypd_perp, aes(x=reorder(PERP_RACE,-PERP_PROP), y=PERP_PROP)) +
+  geom_bar(stat = "identity", position="dodge") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle("Top 7 perpetrators in New York 2006 - 2020") +
+  xlab("Perpetrator Race") +
+  ylab("Proportion")
+```
+
+AS we can see on the above graph,  
+The **black** people are the most perpetrator and victims at the same time *between 2006 and 2020*.  
+about **70% of victim is the black** and about **65% of perpetrator is the black**.  
+(Cases that perpetrator information is missing is excluded)
+
+Then what races were the biggest victims of the Black's crime and what races shot the Black most?
+
+
+```{r perp_vic_group}
+nypd_cases_perp_to_vic <- nypd_cases %>%
+  group_by(PERP_RACE, VIC_RACE) %>%
+  summarize(count_incident = n()) %>%
+  mutate(vic_prop = count_incident / sum(count_incident),
+         prep_prop = count_incident / nrow(nypd_cases)) %>%
+  filter(PERP_RACE!='AMERICAN INDIAN/ALASKAN NATIVE')
+```
+
+## Perpetrator - Victim pair race bar chart
+<br>
+```{r bar_chart}
+ggplot(nypd_cases_perp_to_vic, aes(fill=VIC_RACE, x=reorder(PERP_RACE,-vic_prop), y=vic_prop)) +
+  geom_bar(stat = "identity", position="dodge") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle("Perpetrator-Victim pair proportion 2006 - 2020") +
+  xlab("Perpetrator Races") +
+  ylab("Victim Proportion") +
+  labs(fill="Victim races")
+```
+
+The answer is the Black for both cases.  
+**During 2006 - 2020, most shooting incident happened by the Black and the victim of the incidents were the Black too in New York.**  
+
+Above graph also shows that each races shot their own race in most cases.
+
+Let's check if this trend is overall or happened in some specific cases.
+
+## Shooting incident yearly trend
+<br><br>
+```{r incident_perp_trend}
+nypd_cases_perp_year <- nypd_cases %>%
+  group_by(YEAR,PERP_RACE) %>%
+  summarize(count_incident = n()) %>%
+  mutate(PERP_PROP = count_incident / sum(count_incident))
+```
+
+```{r incident_vic_trend}
+nypd_cases_vic_year <- nypd_cases %>%
+  group_by(YEAR,VIC_RACE) %>%
+  summarize(count_incident = n()) %>%
+  mutate(VIC_PROP = count_incident / sum(count_incident))
+```
+
+```{r black_perp_year}
+nypd_cases_black_perp_year <- nypd_cases_perp_year %>% filter(PERP_RACE == 'BLACK')
+ggplot(nypd_cases_black_perp_year, aes(x=YEAR, y=PERP_PROP)) +
+  geom_bar(stat = "identity", position="dodge") + 
+  ggtitle("Black perpetrator yearly trend") +
+  ylab("Proportion")
+```
+<br><br>
+```{r black_vic_year}
+nypd_cases_black_vic_year <- nypd_cases_vic_year %>% filter(VIC_RACE == 'BLACK')
+ggplot(nypd_cases_black_vic_year, aes(x=YEAR, y=VIC_PROP)) +
+  geom_bar(stat = "identity", position="dodge") +
+  ggtitle("Black victim yearly trend") +
+  ylab("Proportion")
+```
+
+At least **60%** of shooting incident has been occurred by the Black, and about **60%** of victims was the Black *every year*.  
+This situation is *not temporary*.
+
+## Victim proprtion yearly trend by the Black
+<br><br>
+```{r perp_vic_year}
+nypd_cases_perp_to_vic_year <- nypd_cases %>%
+  group_by(YEAR, PERP_RACE, VIC_RACE) %>%
+  summarize(count_incident = n()) %>%
+  mutate(perp_vic_prop = count_incident / sum(count_incident))
+```
+
+```{r perp_vic_year_trend}
+nypd_cases_perp_to_vic_black_year <- nypd_cases_perp_to_vic_year %>% filter(PERP_RACE == 'BLACK')
+ggplot(nypd_cases_perp_to_vic_black_year, aes(fill=VIC_RACE, x=YEAR, y=perp_vic_prop)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  ggtitle("Victim races by the Black yearly trend") +
+  ylab("Proportion") +
+  labs(fill="Victim races")
+```
+<br><br>
+
+## Conclusion
+The phenomenon that we observed in overall data also occurred every year.  
+The Black shot the Black most.  
+
+Therefore, at least, for the shooting incident, It is hard to see that there is some racism.  
+But as I mentioned above, there are big null values which can cause bias.  
+<br><br>
+
+## Modeling - Victim Trend Prediction
+<br><br><br>
+```{r linear_model}
+mod <- lm(VIC_PROP ~ YEAR, data = nypd_cases_black_vic_year)
+df <- data.frame(YEAR=c(2021,2022,2023,2024,2025))
+pred <- predict(mod, df)
+df$VIC_PROP <- pred
+```
+
+```{r vic_prediction}
+ggplot(df, aes(x=YEAR, y=VIC_PROP)) +
+  geom_bar(stat="identity", position="dodge") +
+  ggtitle("Victim rate prediction") +
+  ylab("Victim rate")
+```
+
+I predicted how victim proportion will be.  
+It is such a simple model which uses only YEAR as feature.  
+Victim rate will be declined slightly if current trend is maintained.  
+
+To decrease shooting incident in New York, it is necessary to solve issues in the Black society.
+But with this trend, it will take long time.  
+New York need to provide some help on the Black society.
+
